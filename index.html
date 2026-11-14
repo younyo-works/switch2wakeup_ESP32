@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Switch 2 Wakeup - 書き込み</title>
+<style>
+:root {
+  --bg: #f3f5f7; --card: #ffffff; --text: #1d2733; --sub: #5b6876;
+  --line: #dde3e9; --accent: #0b6bcb; --accent-dark: #084f96; --ok: #1a7f46;
+  --warn-bg: #fff6df; --warn-line: #e5c667; --log-bg: #14181d; --log-text: #b8f5c8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161b; --card: #1b2128; --text: #e6ebf0; --sub: #9aa7b4;
+    --line: #2c3540; --accent: #4a9df0; --accent-dark: #2f7fd0; --ok: #4cc380;
+    --warn-bg: #2e2812; --warn-line: #7a6a2a; --log-bg: #0b0e11; --log-text: #b8f5c8;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--text);
+  font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-size: 15px; line-height: 1.7;
+}
+main { max-width: 760px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 0 0 10px; }
+h3 { font-size: 15px; margin: 18px 0 6px; }
+.lead { color: var(--sub); margin: 0 0 20px; }
+section {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 8px; padding: 18px 20px; margin-bottom: 16px;
+}
+button {
+  font: inherit; font-size: 15px; padding: 10px 18px; border: 0; border-radius: 6px;
+  background: var(--accent); color: #fff; cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--accent-dark); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+#status, #serialStatus { font-weight: bold; margin: 0 0 10px; min-height: 1.7em; }
+#status.ok, #serialStatus.ok { color: var(--ok); }
+pre {
+  margin: 0; background: var(--log-bg); color: var(--log-text); border-radius: 6px;
+  padding: 10px 12px; height: 170px; overflow-y: auto;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+}
+#serialConsole { height: 220px; }
+.cmdrow { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.cmdrow input {
+  flex: 1 1 260px; font: inherit; font-family: ui-monospace, Consolas, monospace;
+  padding: 9px 12px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--card); color: var(--text);
+}
+ol, ul { margin: 6px 0; padding-left: 22px; }
+li { margin: 4px 0; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+th { background: var(--bg); font-weight: 600; width: 38%; }
+code { font-family: ui-monospace, Consolas, monospace; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+.note { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 6px; padding: 10px 14px; margin: 12px 0 0; }
+#unsupported { display: none; }
+</style>
+</head>
+<body>
+<main>
+<h1>Switch 2 Wakeup 書き込み</h1>
+<p class="lead">ESP32-C3 にファームウェアを書き込みます。作り方に合わせて、下で「プロコン組み込み版」か「単体版（ボタン版）」を選んでください。書き込みは最初の1回だけ。以降はPCなしで設定を変更できます。書き込み後は、そのまま下のシリアルコンソールで起動後の表示を確認できます。</p>
+
+<section id="unsupported" class="note">
+  このブラウザは Web Serial に対応していません。PC の Chrome または Edge で開いてください。
+</section>
+
+<section>
+  <h2>ファームウェアを書き込む</h2>
+  <p>ESP32 を USB でPCにつないでから、ファームウェアを選んで、下のボタンを順に押します。</p>
+  <div class="fwselect" style="display:grid;gap:6px;margin:10px 0;">
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="fwVariant" value="switch2_wakeup_standalone.bin" checked>
+      プロコン組み込み版（プロコンのホーム/マイナス信号線に接続する）
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="fwVariant" value="switch2_wakeup_standalone_button.bin">
+      単体版（ボタン版：GPIOとGNDの間に物理ボタンを接続する）
+    </label>
+  </div>
+  <div class="actions">
+    <button id="connectBtn">ポートを選んで接続</button>
+    <button id="flashBtn" disabled>書き込み開始</button>
+  </div>
+  <p id="status">未接続</p>
+  <pre id="console">待機中...</pre>
+  <div class="note">
+    <b>推奨手順:</b> ESP32 の RST ボタンを押して、LED が点滅する5秒間のうちに「ポートを選んで接続」を押してください。この入り方なら、書き込み後も自動で通常起動します。<br>
+    接続できない場合の予備手段として、<code>BOOT</code> ボタンを押したまま USB を差し直してから接続する方法もあります。ただしこの入り方では、ESP32-C3 の仕様上、書き込み後にソフトウェアから通常起動へ戻せないため、<b>書き込み後に RST ボタンを1回押してください</b>(故障ではありません)。<br>
+    このページは <code>file://</code> ではなく <code>http://localhost</code> か https のページとして開く必要があります。
+  </div>
+</section>
+
+<section>
+  <h2>シリアルコンソール(書き込み後の確認・設定)</h2>
+  <p>書き込みが終わると自動で1回だけここを開き、ESP32 からの出力を表示します。「USBデバイスを検知したら自動でシリアルを開く」が ON の場合は、デバイスが現れたタイミングでも自動で開きます(ポーリングで掴みにいく方式ではなく信号操作もしないため、スリープ/復帰に干渉しません)。手動で開く場合は「シリアルを開く」を押してください。<b>表示が出ない場合は、コンソールを開いたまま ESP32 の RST ボタンを押す</b>と、起動直後の表示から見られます(リセット後 約5秒間だけシリアルが有効です)。</p>
+  <div class="actions">
+    <button id="serialOpenBtn">シリアルを開く</button>
+    <button id="serialCloseBtn" disabled>シリアルを閉じる</button>
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="autoOpenChk" checked> USBデバイスを検知したら自動でシリアルを開く
+    </label>
+  </div>
+  <p id="serialStatus">閉じています</p>
+  <pre id="serialConsole">まだ何も受信していません。</pre>
+  <div class="cmdrow">
+    <input id="cmdInput" type="text" placeholder="例: SHOW / CLR / CFG:AA:BB:CC:DD:EE:FF,11:22:33:44:55:66,0x2066" autocomplete="off" spellcheck="false">
+    <button id="cmdSendBtn" disabled>送信</button>
+    <button id="cmdShowBtn" disabled>SHOW</button>
+  </div>
+  <p class="note">コマンド書式： <b>CFG:ジョイコンのMAC,本体のMAC,PID</b>（例： CFG:AA:BB:CC:DD:EE:FF,11:22:33:44:55:66,0x2066）／ SHOW = 現在の設定を表示 ／ CLR = 設定を消去。PID は右 Joy-Con が 0x2066、左が 0x2067 です。</p>
+  <div class="note">
+    コマンドが使えるのは、リセット後のサービス待機(約5秒)の間だけです。待機が終わってスリープに入ると USB が切れて表示も止まりますが、正常です。
+    シリアルを開いている間は書き込みできません。書き込む時は先にシリアルを閉じてください。
+  </div>
+</section>
+
+<section>
+  <h2>書き込み後の流れ</h2>
+  <ol>
+    <li>書き込みが終わると ESP32 が再起動し、約5秒のあいだ LED が1秒に1回短く光ります。その後ディープスリープに入ります。BOOT ボタンを押して接続した場合は再起動しないのが仕様なので、RST ボタンを押してください。</li>
+    <li>ディープスリープに入るとUSBの接続は切れます。PCからデバイスが消えるのは正常です。</li>
+    <li>この時点の設定はダミーMAC(<code>AA:BB:CC:DD:EE:FF</code> / <code>11:22:33:44:55:66</code>)です。ホームボタンを押しても Switch 2 は起動しません。次の「Switch 2 の情報を登録する」を行ってください。</li>
+  </ol>
+  <h3>配線</h3>
+  <table>
+    <tr><th>GPIO4</th><td>ホームボタンの信号線</td></tr>
+    <tr><th>GPIO3</th><td>マイナスボタンの信号線</td></tr>
+  </table>
+  <p>単体版（ボタン版）の場合：ホーム/マイナスは物理ボタンで、それぞれ GPIO と GND の間に接続します（内部プルアップを使うため抵抗は不要です）。</p>
+</section>
+
+<section>
+  <h2>Switch 2 の情報を登録する</h2>
+  <p>Joy-Con 2 と Switch 2 本体の MAC アドレスを、ESP32 が自分で聞き取って保存します。PC は使いません。</p>
+  <ol>
+    <li>Switch 2 本体をスリープ状態にします。</li>
+    <li>マイナスボタン(-)を押したまま、ホームボタンを押します。電源投入やリセットの瞬間に - を押したままにする方法でも同じです。</li>
+    <li>LED が「ピピッ」と繰り返し光ればスキャナーモードです。動作時間は15秒です。</li>
+    <li>15秒以内に、ペアリング済みの Joy-Con 2 の任意のボタンを押します。本体から外す操作でも反応する場合があります。確実なのはボタンを押す方法です。</li>
+    <li>情報を受け取れると LED が2秒間点灯し、保存してスリープに入ります。</li>
+    <li>ホームボタンを押して Switch 2 が起動すれば完了です。</li>
+  </ol>
+  <p>15秒たっても見つからなかった場合は LED が5回素早く光り、設定は変わらないまま眠ります。Joy-Con 2 を ESP32 に近づけて、もう一度試してください。</p>
+  <h3>LED の見かた</h3>
+  <table>
+    <tr><th>1秒に1回、短く光る</th><td>起動直後の待機中(約5秒)</td></tr>
+    <tr><th>高速で点滅</th><td>起動信号を送信中(3秒)</td></tr>
+    <tr><th>「ピピッ」を繰り返す</th><td>スキャナーモード(15秒)</td></tr>
+    <tr><th>2秒間点灯</th><td>登録成功</td></tr>
+    <tr><th>5回素早く点滅</th><td>登録失敗(設定は変更なし)</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>困ったとき</h2>
+  <ul>
+    <li><b>もう一度書き込みたい:</b> <code>BOOT</code> ボタンを押したまま USB を差し直すと、スリープ中でも書き込めます。リセットボタンを押した後の5秒間も接続できます。</li>
+    <li><b>登録した情報を消したい:</b> 結合された .bin を書き込み直すと、登録内容は初期状態(ダミーMAC)に戻ります。</li>
+    <li><b>シリアルで確認したい:</b> 上のシリアルコンソールを開いてから RST を押し、5秒間に <code>SHOW</code> を送ると現在の登録内容が表示されます。<code>CLR</code> で初期状態に戻せます。</li>
+    <li><b>書き込み後に自動で再起動しない:</b> BOOT ボタンを押して接続した場合は仕様です。USB-Serial/JTAG のリセットはコアリセットのみでブート用ピンを読み直さないため、手動で入ったダウンロードモードからはソフトウェアで抜けられません。RST ボタンを押せば通常起動します。次回からは「RST を押して5秒以内に接続」の手順だと、書き込み後も自動で起動します。</li>
+    <li><b>Switch 2 が起動しない:</b> 登録後に Switch 2 側で Joy-Con 2 の登録を解除していないか確認してください。</li>
+  </ul>
+</section>
+</main>
+
+<script type="module">
+import { ESPLoader, Transport } from "https://cdn.jsdelivr.net/npm/esptool-js@0.7.0/bundle.js";
+
+// 書き込むファームウェア(このHTMLと同じフォルダに置く。Arduino IDE の「.merged.bin」を改名)
+function selectedFirmware() {
+  const el = document.querySelector('input[name="fwVariant"]:checked');
+  return el ? el.value : "switch2_wakeup_standalone.bin";
+}
+
+const consoleEl = document.getElementById("console");
+const statusEl = document.getElementById("status");
+const connectBtn = document.getElementById("connectBtn");
+const flashBtn = document.getElementById("flashBtn");
+const serialConsoleEl = document.getElementById("serialConsole");
+const serialStatusEl = document.getElementById("serialStatus");
+const serialOpenBtn = document.getElementById("serialOpenBtn");
+const serialCloseBtn = document.getElementById("serialCloseBtn");
+const cmdInput = document.getElementById("cmdInput");
+const cmdSendBtn = document.getElementById("cmdSendBtn");
+const cmdShowBtn = document.getElementById("cmdShowBtn");
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function log(text) {
+  consoleEl.textContent += text + "\n";
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+function setStatus(text, ok = false) {
+  statusEl.textContent = text;
+  statusEl.className = ok ? "ok" : "";
+}
+function slog(text) {
+  serialConsoleEl.textContent += text;
+  serialConsoleEl.scrollTop = serialConsoleEl.scrollHeight;
+}
+function setSerialStatus(text, ok = false) {
+  serialStatusEl.textContent = text;
+  serialStatusEl.className = ok ? "ok" : "";
+}
+
+if (!("serial" in navigator)) {
+  document.getElementById("unsupported").style.display = "block";
+  connectBtn.disabled = true;
+  serialOpenBtn.disabled = true;
+  setStatus("このブラウザでは使えません");
+  setSerialStatus("このブラウザでは使えません");
+}
+
+let port = null, transport = null, loader = null;
+
+// ---------------------------- シリアルコンソール ----------------------------
+// 書き込み側の Transport がポートを掴んでいる間は使えない。
+// 書き込み完了後は Transport を解放してから、同じポートを通常の
+// シリアルとして開き直し、ESP32 の出力を読み続ける。
+let serialOpen = false;
+let serialReader = null;
+let serialOpenedAt = 0;
+let lastSerialDataAt = 0;
+
+function setSerialButtons() {
+  serialOpenBtn.disabled = serialOpen;
+  serialCloseBtn.disabled = !serialOpen;
+  cmdSendBtn.disabled = !serialOpen;
+  cmdShowBtn.disabled = !serialOpen;
+  connectBtn.disabled = serialOpen; // シリアル使用中は書き込み開始不可
+}
+
+let connectionEpoch = 0;   // 接続の世代。無音チェックの誤発防止用
+
+// 許可済みポートの中から、以前使っていたものと同じポートを探し直す
+async function refreshGrantedPort() {
+  if (!navigator.serial.getPorts) return;
+  try {
+    const granted = await navigator.serial.getPorts();
+    if (!granted.length) return;
+    if (port && granted.includes(port)) return;
+    let info = null;
+    try { info = port ? port.getInfo() : null; } catch (e) {}
+    const match = granted.find((g) => {
+      if (!info) return true;
+      try {
+        const gi = g.getInfo();
+        return gi.usbVendorId === info.usbVendorId && gi.usbProductId === info.usbProductId;
+      } catch (e) { return false; }
+    });
+    if (match) port = match;
+    else if (!port) port = granted[0];
+  } catch (e) {}
+}
+
+let lastOpenErr = "";
+
+// 開けたのに9秒たっても何も来ない場合、ダウンロードモードに
+// 留まっている可能性が高いので、その見分け方を表示する
+function checkSerialSilence() {
+  if (serialOpen && !lastSerialDataAt) {
+    slog("\n[注意] 接続できましたが ESP32 から何も届いていません。\nダウンロードモードに留まっている可能性が高い状態です(BOOT ボタンを押して接続した場合は、この状態になるのが仕様です)。このまま RST ボタンを押してください(押せば起動直後の表示がここに出ます)。\n");
+  }
+}
+
+// ロック解放済みのポートを確実に閉じる。デバイス消失中は close() が
+// 返ってこないことがあるため、タイムアウト付きで待つ。
+async function safeClose(p) {
+  if (!p) return;
+  try { await Promise.race([p.close(), sleep(1200)]); } catch (e) {}
+}
+
+// 1回だけ接続を試みる。失敗したら理由を lastOpenErr に残す。
+// ポイント: 切断されたポートは「開いたまま」の内部状態が残るため、
+// open() の前に必ず close() して状態を "closed" に戻すこと。
+// v5 はこれが無く、open() が InvalidStateError で弾かれ続けていた。
+async function tryOpenOnce() {
+  await refreshGrantedPort();
+  if (!port) { lastOpenErr = "許可済みポートが見つかりません"; return false; }
+  // Chrome 130以降: 物理的に存在しない間は open しても無駄なので待つ
+  if ("connected" in port && port.connected === false) {
+    lastOpenErr = "デバイスがまだ戻っていません(USB未検出)";
+    return false;
+  }
+  await safeClose(port);
+  try {
+    await port.open({ baudRate: 115200 });
+  } catch (e) {
+    lastOpenErr = `${e.name}: ${e.message}`;
+    return false;
+  }
+  // 信号(DTR/RTS)には一切触らない。C3 では RTS がリセット相当に
+  // 写るため、コンソールの開閉で信号を動かすと本体の動作に干渉する。
+  connectionEpoch++;
+  lastSerialDataAt = 0;
+  lastOpenErr = "";
+  const epoch = connectionEpoch;
+  setTimeout(() => { if (epoch === connectionEpoch) checkSerialSilence(); }, 9000);
+  return true;
+}
+
+async function openSerialConsole(auto = false, tries = null) {
+  if (serialOpen) return true;
+  if (!port && !auto) {
+    try { port = await navigator.serial.requestPort(); }
+    catch (e) { setSerialStatus("ポートが選択されませんでした"); return false; }
+  }
+  serialOpen = true;
+  setSerialButtons();
+  // 開くのはこの1回だけ。書き込み直後(auto)は再列挙待ちとして
+  // 最大約10秒だけリトライするが、切断後の自動再接続はしない。
+  let ok = false;
+  const maxTry = tries !== null ? tries : (auto ? 12 : 1);
+  for (let i = 0; i < maxTry && serialOpen; i++) {
+    ok = await tryOpenOnce();
+    if (ok) break;
+    setSerialStatus(`接続を試みています... (${i + 1}回目)${lastOpenErr ? " / " + lastOpenErr : ""}`);
+    await sleep(800);
+  }
+  if (!ok) {
+    serialOpen = false;
+    setSerialButtons();
+    setSerialStatus("開けませんでした。RST を押してから「シリアルを開く」を押してください");
+    return false;
+  }
+  setSerialStatus("開いています。ESP32 の出力を待っています...", true);
+  slog("\n--- シリアルコンソールを開きました ---\n");
+  readSerialOnce();
+  return true;
+}
+
+// シリアル読み取り: 1回開いて、切れたら終わる。再接続はしない。
+async function readSerialOnce() {
+  const decoder = new TextDecoder();
+  if (!port || !port.readable) {
+    serialOpen = false;
+    setSerialButtons();
+    setSerialStatus("開けませんでした");
+    return;
+  }
+  serialReader = port.readable.getReader();
+  try {
+    while (serialOpen) {
+      const { value, done } = await serialReader.read();
+      if (done) break;
+      if (value) { lastSerialDataAt = Date.now(); slog(decoder.decode(value, { stream: true })); }
+    }
+  } catch (e) {
+    // リセット/スリープで切れた場合はここに来る
+  } finally {
+    try { serialReader.releaseLock(); } catch (e) {}
+    serialReader = null;
+  }
+  await safeClose(port);
+  if (serialOpen) {
+    serialOpen = false;
+    setSerialButtons();
+    setSerialStatus("切断されました。再度見る場合は「シリアルを開く」を押してください");
+    slog("\n--- 切断されました ---\n");
+  }
+}
+
+async function closeSerialConsole() {
+  serialOpen = false;
+  try { if (serialReader) await serialReader.cancel(); } catch (e) {}
+  await safeClose(port);
+  setSerialButtons();
+  setSerialStatus("閉じています");
+}
+
+// USB の抜き差しをログに出し、検知したタイミングで1回だけ自動で開く。
+// ポーリングで掴みにいく方式(v7以前)とは違い、イベント駆動の単発 open で、
+// 信号操作もしないため、デバイスのスリープ/復帰には干渉しない。
+const autoOpenChk = document.getElementById("autoOpenChk");
+let flashBusy = false;
+let autoOpenBusy = false;
+let lastAutoOpenAt = 0;
+if (navigator.serial && navigator.serial.addEventListener) {
+  navigator.serial.addEventListener("connect", async () => {
+    slog("[USB] デバイスが現れました\n");
+    if (!autoOpenChk.checked || serialOpen || autoOpenBusy || flashBusy) return;
+    if (Date.now() - lastAutoOpenAt < 1500) return;
+    autoOpenBusy = true;
+    lastAutoOpenAt = Date.now();
+    try { await openSerialConsole(true, 1); }
+    finally { autoOpenBusy = false; }
+  });
+  navigator.serial.addEventListener("disconnect", () => { slog("[USB] デバイスが消えました\n"); });
+}
+
+async function sendSerialLine(text) {
+  if (!port || !port.writable) { slog("\n[送信エラー] シリアルが開いていません\n"); return; }
+  const writer = port.writable.getWriter();
+  try {
+    await writer.write(new TextEncoder().encode(text + "\n"));
+    slog(`\n>>> ${text}\n`);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+serialOpenBtn.addEventListener("click", () => openSerialConsole(false));
+serialCloseBtn.addEventListener("click", () => closeSerialConsole());
+cmdSendBtn.addEventListener("click", () => {
+  const v = cmdInput.value.trim();
+  if (v) sendSerialLine(v);
+});
+cmdShowBtn.addEventListener("click", () => sendSerialLine("SHOW"));
+cmdInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !cmdSendBtn.disabled) cmdSendBtn.click();
+});
+
+// ---------------------------- 書き込み --------------------------------------
+connectBtn.addEventListener("click", async () => {
+  try {
+    if (serialOpen) await closeSerialConsole();
+    flashBusy = true;
+    connectBtn.disabled = true;
+    setStatus("ポートを選択してください...");
+    if (!port) {
+      port = await navigator.serial.requestPort();
+    }
+    transport = new Transport(port);
+    loader = new ESPLoader({
+      transport,
+      baudrate: 115200,
+      terminal: {
+        clean() {},
+        writeLine: (d) => log(d),
+        write: (d) => log(d),
+      },
+    });
+    const chip = await loader.main();
+    log(`接続しました: ${chip}`);
+    setStatus("接続済み。「書き込み開始」を押してください");
+    flashBtn.disabled = false;
+  } catch (e) {
+    flashBusy = false;
+    log(`[接続エラー] ${e.message}`);
+    setStatus("接続できませんでした。BOOTボタンを押したままUSBを差し直して再試行してください");
+    connectBtn.disabled = false;
+  }
+});
+
+flashBtn.addEventListener("click", async () => {
+  try {
+    flashBtn.disabled = true;
+    setStatus("書き込み中... USBを抜かないでください");
+    const FIRMWARE_FILE = selectedFirmware();
+    log(`>>> ${FIRMWARE_FILE} を書き込みます`);
+    const res = await fetch(FIRMWARE_FILE);
+    if (!res.ok) throw new Error(`${FIRMWARE_FILE} が見つかりません。index.html と同じフォルダに置いてください。`);
+    const buf = await res.arrayBuffer();
+    await loader.writeFlash({
+      fileArray: [{ data: new Uint8Array(buf), address: 0x0000 }],
+      flashSize: "keep",
+      eraseAll: false,
+      compress: true,
+    });
+    log(">>> 書き込み完了。再起動します");
+    // 通常起動へのリセットは Transport 経由で一貫して行う。
+    // esptool-js の hard_reset は RTS のパルスだけで DTR が残ることがあり、
+    // ネイティブUSB機では DTR=IO0(ブート選択) に写るため、ダウンロード
+    // モードへ戻ってしまう。そこで DTR(→IO0) を解放したまま RTS(→EN)
+    // だけをパルスし、解放後に少し待ってから切断する(切断時の信号変化が
+    // ブート判定と競合しないようにするため)。
+    try {
+      await transport.setDTR(false);
+      await transport.setRTS(true);
+      await sleep(250);
+      await transport.setRTS(false);
+      log("-> 通常起動でリセットしました");
+    } catch (e) { log(`[リセット] ${e.message}`); }
+    await sleep(600);
+    try { await transport.disconnect(); } catch (e) {}
+    try { await port.close(); } catch (e) {}
+    setStatus("書き込み完了。シリアルコンソールで起動後の表示を確認してください", true);
+    log(">>> 完了。自動でシリアルコンソールを開きます。何も表示されない場合は RST ボタンを押してください。");
+    connectBtn.disabled = false; // 別の個体を続けて書き込めるように
+    // 再列挙のタイミングは環境で変わるため、コンソール側の
+    // 初回リトライ(最大約10秒)に任せる
+    await sleep(600);
+    await openSerialConsole(true);
+    flashBusy = false;
+  } catch (e) {
+    flashBusy = false;
+    log(`[書込エラー] ${e.message}`);
+    setStatus("書き込みに失敗しました。ログを確認してください");
+    flashBtn.disabled = false;
+  }
+});
+setSerialButtons();
+</script>
+</body>
+</html>
